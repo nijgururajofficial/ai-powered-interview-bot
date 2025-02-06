@@ -68,7 +68,7 @@ PyPDF2==3.0.1  # For PDF processing
 ## Project Structure
 
 ```
-interview-simulator/
+/
 │
 ├── main.py              # Main application file
 ├── utils.py            # Utility functions
