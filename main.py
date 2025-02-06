@@ -23,12 +23,17 @@ class ChatbotInterviewAgent:
         # Initialize session state for interview progress
         if 'interview_stage' not in st.session_state:
             st.session_state.interview_stage = 'resume_screening'
-        if 'current_question_index' not in st.session_state:
-            st.session_state.current_question_index = 0
-        if 'stage_questions' not in st.session_state:
-            st.session_state.stage_questions = []
+        # Use stage-specific keys for questions and progress
+        if f'technical_questions' not in st.session_state:
+            st.session_state.technical_questions = []
+        if f'dsa_questions' not in st.session_state:
+            st.session_state.dsa_questions = []
+        if f'behavioral_questions' not in st.session_state:
+            st.session_state.behavioral_questions = []
+        if 'current_stage_index' not in st.session_state:
+            st.session_state.current_stage_index = {}
         if 'stage_scores' not in st.session_state:
-            st.session_state.stage_scores = []
+            st.session_state.stage_scores = {}
         if 'interview_complete' not in st.session_state:
             st.session_state.interview_complete = False
 
@@ -151,8 +156,9 @@ class ChatbotInterviewAgent:
 
     def generate_behavioral_questions(self) -> List[Dict]:
         """Generate behavioral questions with scoring mechanism"""
-        prompt = f"""Generate behavioral questions with scoring criteria:
+        prompt = f"""Generate 4 behavioral questions with scoring criteria:
         Resume Context: {self.resume_text}
+        Job Description: {self.job_description}
 
         Return as JSON:
         {{
@@ -183,7 +189,7 @@ class ChatbotInterviewAgent:
         return self._parse_questions(response.choices[0].message.content, 'behavioral_questions')
             
     def compare_resume_with_job_description(self):
-        """Resume screening logic - kept from your original code"""
+        """Resume screening logic"""
         prompt = f"""
             You are an expert career advisor. Evaluate how well a resume matches a job description.
             - The resume is provided below.
@@ -214,9 +220,26 @@ class ChatbotInterviewAgent:
         except Exception as e:
             return f"An error occurred while contacting OpenAI API: {e}"
 
+    def _handle_resume_screening(self):
+        """Handle the resume screening stage"""
+        result = self.compare_resume_with_job_description()
+        st.markdown(result)
+        
+        score = extract_score_from_response(result)
+        if score is not None:
+            normalized_score = score / 10.0
+            if normalized_score >= 0.4:
+                st.success("Your resume has a strong match! Let's begin the interview.")
+                st.session_state.interview_stage = 'technical'
+                st.rerun()
+            else:
+                st.error("Your resume did not meet our requirements. Thank you for your interest.")
+                st.session_state.interview_complete = True
+
     def conduct_chatbot_interview(self):
         """Conduct interview in a chatbot style"""
         if st.session_state.interview_complete:
+            st.info("Interview complete. Thank you for participating!")
             return
             
         # Display current stage header
@@ -232,90 +255,83 @@ class ChatbotInterviewAgent:
         # Handle different stages
         if st.session_state.interview_stage == 'resume_screening':
             self._handle_resume_screening()
-        elif st.session_state.interview_stage == 'technical':
-            self._handle_interview_stage('technical', self.generate_technical_questions)
-        elif st.session_state.interview_stage == 'dsa':
-            self._handle_interview_stage('dsa', self.generate_dsa_questions)
-        elif st.session_state.interview_stage == 'behavioral':
-            self._handle_interview_stage('behavioral', self.generate_behavioral_questions)
+        else:
+            self._handle_interview_stage(stage=st.session_state.interview_stage)
 
-    def _handle_resume_screening(self):
-        """Handle the resume screening stage"""
-        result = self.compare_resume_with_job_description()
-        st.markdown(result)
-        
-        score = extract_score_from_response(result)
-        if score is not None:
-            normalized_score = score / 10.0
-            if normalized_score >= 0.7:
-                st.info("Your resume has a strong match! Let's begin the technical interview.")
-                st.session_state.interview_stage = 'technical'
-                # Add a button to start the interview
-                if st.button("Begin Technical Interview"):
-                    st.experimental_rerun()
-            else:
-                st.warning("Your resume did not meet our requirements. Thank you for your interest.")
-                st.session_state.interview_complete = True
-
-    def _handle_interview_stage(self, stage: str, question_generator):
+    def _handle_interview_stage(self, stage: str):
         """Handle each interview stage in a chatbot style"""
-        # Generate questions if not already generated
-        if not st.session_state.stage_questions:
-            st.session_state.stage_questions = question_generator()
-            st.session_state.current_question_index = 0
-            st.session_state.stage_scores = []
-            
-        # Get current question
-        if st.session_state.current_question_index < len(st.session_state.stage_questions):
-            current_question = st.session_state.stage_questions[st.session_state.current_question_index]
+        # Stage-specific session state keys
+        questions_key = f"{stage}_questions"
+        index_key = f"{stage}_index"
+        scores_key = f"{stage}_scores"
+
+        # Initialize stage-specific session state
+        if not st.session_state.get(questions_key):
+            question_generator = getattr(self, f"generate_{stage}_questions")
+            st.session_state[questions_key] = question_generator()
+            st.session_state[index_key] = 0
+            st.session_state[scores_key] = []
+
+        questions = st.session_state[questions_key]
+        current_index = st.session_state[index_key]
+
+        if current_index < len(questions):
+            current_question = questions[current_index]
             
             # Display current question
-            st.write(f"Question {st.session_state.current_question_index + 1}:")
-            st.write(current_question['question'])
+            st.subheader(f"Question {current_index + 1} of {len(questions)}")
+            st.markdown(f"**{current_question['question']}**")
             
             # Get user response
-            user_response = st.text_area("Your answer:", key=f"response_{stage}_{st.session_state.current_question_index}")
+            response_key = f"{stage}_response_{current_index}"
+            user_response = st.text_area("Your answer:", key=response_key)
             
             # Handle response submission
-            if st.button("Submit Answer"):
+            if st.button("Submit Answer", key=f"{stage}_submit_{current_index}"):
                 if user_response.strip():
                     # Evaluate response
                     score = self.evaluate_response(current_question, user_response)
-                    st.session_state.stage_scores.append(score)
+                    st.session_state[scores_key].append(score)
                     
                     # Show feedback
-                    st.write(f"Score: {score:.2f}")
+                    st.write(f"**Score:** {score:.2f}/1.0")
+                    if current_index < len(questions) - 1:
+                        st.write("---")
                     
                     # Move to next question
-                    st.session_state.current_question_index += 1
-                    
-                    # Check if stage is complete
-                    if st.session_state.current_question_index >= len(st.session_state.stage_questions):
-                        self._handle_stage_completion(stage)
-                    
-                    st.experimental_rerun()
+                    st.session_state[index_key] += 1
+                    st.rerun()
                 else:
                     st.error("Please provide an answer before proceeding.")
+        else:
+            self._handle_stage_completion(stage)
 
     def _handle_stage_completion(self, stage: str):
         """Handle the completion of an interview stage"""
-        avg_score = sum(st.session_state.stage_scores) / len(st.session_state.stage_scores)
+        scores = st.session_state[f"{stage}_scores"]
+        avg_score = sum(scores) / len(scores) if scores else 0
         
         if avg_score >= self.THRESHOLDS[stage]:
-            next_stages = {'technical': 'dsa', 'dsa': 'behavioral', 'behavioral': 'complete'}
-            if stage in next_stages:
-                if next_stages[stage] == 'complete':
-                    st.balloons()
-                    st.success("Congratulations! You've successfully completed all interview stages!")
-                    st.session_state.interview_complete = True
-                else:
-                    st.success(f"Excellent! You've passed the {stage} stage.")
-                    st.session_state.interview_stage = next_stages[stage]
-                    st.session_state.stage_questions = []
-                    st.session_state.current_question_index = 0
-                    st.session_state.stage_scores = []
+            next_stages = {
+                'technical': 'dsa',
+                'dsa': 'behavioral',
+                'behavioral': 'complete'
+            }
+            next_stage = next_stages.get(stage, 'complete')
+            
+            if next_stage == 'complete':
+                st.balloons()
+                st.success("Congratulations! You've successfully completed all interview stages!")
+                st.session_state.interview_complete = True
+            else:
+                st.session_state.interview_stage = next_stage
+                # Reset previous stage's progress
+                st.session_state[f"{next_stage}_questions"] = []
+                st.session_state[f"{next_stage}_index"] = 0
+                st.session_state[f"{next_stage}_scores"] = []
+                st.rerun()
         else:
-            st.error(f"Thank you for your time, but you did not meet our requirements for the {stage} stage.")
+            st.error(f"Thank you for your time, but you did not meet our requirements for the {stage} stage. You scored: {avg_score:.2f}")
             st.session_state.interview_complete = True
 
 def main():
@@ -324,19 +340,17 @@ def main():
     resume_pdf = st.file_uploader("Upload Resume (PDF)", type=["pdf"])
     job_description = st.text_area("Job Description", height=200)
 
-    if st.button("Start Interview"):
-        if resume_pdf and job_description.strip():
-            resume_text = extract_text_from_pdf(resume_pdf)
-            
-            # Create or get interview agent
-            if 'interview_agent' not in st.session_state:
+    # Check if interview is already initialized
+    if 'interview_agent' in st.session_state:
+        st.session_state.interview_agent.conduct_chatbot_interview()
+    else:
+        if st.button("Start Interview"):
+            if resume_pdf and job_description.strip():
+                resume_text = extract_text_from_pdf(resume_pdf)
                 st.session_state.interview_agent = ChatbotInterviewAgent(resume_text, job_description)
-            
-            # Conduct interview
-            st.session_state.interview_agent.conduct_chatbot_interview()
-                
-        else:
-            st.error("Please upload resume and provide job description")
+                st.rerun()
+            else:
+                st.error("Please upload resume and provide job description")
 
 if __name__ == "__main__":
     main()
