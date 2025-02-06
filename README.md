@@ -25,7 +25,7 @@ An intelligent interview simulation system that uses OpenAI's GPT-3.5 to conduct
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/nijgururajofficial/ai-powered-interview-bot
 cd interview-simulator
 ```
 
